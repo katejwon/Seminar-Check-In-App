@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#0a1f2c" />
 <title>Seminar Check-In</title>
 <style>
   :root {
@@ -27,11 +28,13 @@
     --brand-gray-300: #c1c2c0;
     --brand-gray-200: #dedfdd;
     --brand-gray-100: #efefee;
+    --brand-gradient-top: #004975;
+    --brand-gradient-bottom: #0a1f2c;
 
     --color-primary: var(--brand-medium-blue);
     --color-primary-dark: var(--brand-dark-blue);
     --color-accent: var(--brand-gold);
-    --color-bg: var(--brand-gray-100);
+    --color-bg: linear-gradient(180deg, var(--brand-gradient-top) 0%, var(--brand-gradient-bottom) 100%);
     --color-card: #ffffff;
     --color-text: var(--brand-gray-900);
     --color-muted: var(--brand-gray-700);
@@ -42,7 +45,7 @@
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body {
     margin: 0; padding: 0; height: 100%;
-    background: var(--color-bg); color: var(--color-text);
+    background: var(--color-bg); background-attachment: fixed; color: var(--color-text);
     font-family: var(--font-body);
     font-size: var(--font-base);
     user-select: none;
@@ -51,24 +54,28 @@
   input, textarea, select { user-select: text; }
   #brand-header {
     position: fixed; top: 0; left: 0; right: 0; height: 56px; z-index: 500;
-    display: flex; align-items: baseline; justify-content: center; gap: 8px;
-    background: var(--color-card); border-bottom: 1px solid var(--color-border);
+    display: flex; align-items: baseline; justify-content: flex-start; gap: 8px;
+    padding-left: 24px; background: transparent; border-bottom: 1px solid rgba(255, 255, 255, 0.15);
   }
-  #brand-header .brand-word-serif { font-family: var(--font-heading); font-size: 22px; color: var(--brand-dark-blue); }
-  #brand-header .brand-word-sans { font-family: var(--font-body); font-size: 15px; letter-spacing: 2px; color: var(--brand-medium-blue); font-weight: 600; }
+  #brand-header .brand-word-serif { font-family: var(--font-heading); font-size: 22px; color: var(--brand-gold); }
+  #brand-header .brand-word-sans { font-family: var(--font-body); font-size: 15px; letter-spacing: 2px; color: var(--brand-gold); font-weight: 600; }
   .marquee { display: flex; align-items: center; justify-content: center; gap: 10px; max-width: 280px; margin: 0 auto 20px; }
   .marquee::before, .marquee::after { content: ''; flex: 1; height: 1px; background: var(--brand-gold); }
   .marquee span { color: var(--brand-gold); font-size: 14px; line-height: 1; }
   #app { min-height: 100%; display: flex; flex-direction: column; }
   .screen { display: flex; flex: 1; flex-direction: column; align-items: center; padding: 32px 24px; overflow-y: auto; min-height: calc(100vh - 56px); }
   .screen.hidden { display: none; }
-  .screen-inner { width: 100%; max-width: 720px; margin: auto; text-align: center; }
+  .screen-inner {
+    width: 100%; max-width: 720px; margin: auto; text-align: center;
+    background: var(--color-card); border-radius: 20px; padding: 40px 32px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  }
   h1 { font-family: var(--font-heading); font-weight: 400; font-size: var(--font-xl); color: var(--color-primary-dark); margin-bottom: 8px; }
   h2 { font-family: var(--font-heading); font-weight: 400; font-size: var(--font-large); color: var(--color-primary-dark); margin-bottom: 16px; }
   p.instructions, p.body-text { color: var(--color-muted); font-size: var(--font-base); margin-bottom: 24px; }
   input[type="text"], input[type="password"], input[type="email"], input[type="tel"], input[type="date"], textarea {
     width: 100%; padding: 16px; font-size: var(--font-base); border: 2px solid var(--brand-gray-300);
-    border-radius: var(--radius); margin-bottom: 16px; background: var(--color-card); color: var(--color-text);
+    border-radius: var(--radius); margin-bottom: 16px; background: var(--brand-gray-100); color: var(--color-text);
   }
   label { display: block; text-align: left; font-weight: 600; margin-bottom: 6px; color: var(--color-muted); }
   .field { text-align: left; margin-bottom: 4px; }
@@ -87,18 +94,18 @@
   .hint { color: var(--color-muted); min-height: 28px; margin-bottom: 8px; }
   .results-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
   .result-row {
-    text-align: left; padding: 16px 20px; border-radius: var(--radius); background: var(--color-card);
+    text-align: left; padding: 16px 20px; border-radius: var(--radius); background: var(--brand-gray-100);
     border: 2px solid var(--color-border); font-size: var(--font-base); font-weight: 600; cursor: pointer;
   }
   .card-grid { display: flex; flex-direction: column; gap: 14px; margin: 16px 0; }
   .option-card {
-    padding: 22px; border-radius: var(--radius); background: var(--color-card); border: 2px solid var(--color-border);
+    padding: 22px; border-radius: var(--radius); background: var(--brand-gray-100); border: 2px solid var(--color-border);
     font-size: var(--font-large); font-weight: 700; cursor: pointer; min-height: var(--touch-min);
   }
   .option-card:active, .result-row:active { background: var(--brand-light-blue-green); }
   .error-text { color: var(--color-danger); font-weight: 600; min-height: 24px; margin: 8px 0; }
   .admin-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; justify-content: center; }
-  .admin-tab-btn { padding: 12px 18px; border-radius: 10px; border: 2px solid var(--brand-gray-300); background: #fff; font-weight: 600; cursor: pointer; }
+  .admin-tab-btn { padding: 12px 18px; border-radius: 10px; border: 2px solid var(--brand-gray-300); background: var(--brand-gray-100); font-weight: 600; cursor: pointer; }
   .admin-tab-btn.active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
   .admin-panel { display: none; width: 100%; text-align: left; }
   .admin-panel.active { display: block; }
@@ -106,8 +113,15 @@
   th, td { border: 1px solid var(--color-border); padding: 8px 10px; font-size: 16px; text-align: left; }
   th { background: var(--brand-gray-100); }
   select { padding: 8px; font-size: 15px; border-radius: 8px; border: 1px solid var(--brand-gray-300); }
-  .summary-box { background: #fff; border: 2px solid var(--color-border); border-radius: var(--radius); padding: 16px; margin: 12px 0; text-align: left; }
-  #admin-tap-zone { position: fixed; bottom: 0; right: 0; width: 70px; height: 70px; z-index: 999; opacity: 0; }
+  .summary-box { background: var(--brand-gray-100); border: 2px solid var(--color-border); border-radius: var(--radius); padding: 16px; margin: 12px 0; text-align: left; }
+  #staff-access-btn {
+    position: fixed; bottom: 18px; right: 18px; z-index: 999;
+    padding: 10px 16px; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.85);
+    font-family: var(--font-body); font-size: 14px; font-weight: 600; letter-spacing: 0.5px;
+    cursor: pointer; backdrop-filter: blur(4px);
+  }
+  #staff-access-btn:active { background: rgba(255, 255, 255, 0.18); }
   .checkbox-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; text-align: left; }
   .checkbox-row input { width: 24px; height: 24px; }
   #print-summary { display: none; }
@@ -196,7 +210,7 @@
 
 </div>
 
-<div id="admin-tap-zone"></div>
+<button id="staff-access-btn" type="button">Staff Access</button>
 <div id="print-summary"></div>
 
 <script>
@@ -1292,18 +1306,10 @@ const UI = {
 };
 
 /* =========================================================
-   SECTION: ADMIN ACCESS (unadvertised corner tap zone)
+   SECTION: ADMIN ACCESS
    ========================================================= */
-let adminTapCount = 0;
-let adminTapTimer = null;
-document.getElementById('admin-tap-zone').addEventListener('click', () => {
-  adminTapCount++;
-  if (adminTapTimer) clearTimeout(adminTapTimer);
-  adminTapTimer = setTimeout(() => { adminTapCount = 0; }, 2000);
-  if (adminTapCount >= 5) {
-    adminTapCount = 0;
-    UI.showScreen('screen-admin-gate');
-  }
+document.getElementById('staff-access-btn').addEventListener('click', () => {
+  UI.showScreen('screen-admin-gate');
 });
 
 /* =========================================================
