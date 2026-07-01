@@ -10,13 +10,32 @@
     --font-base: 22px;
     --font-large: 30px;
     --font-xl: 40px;
-    --color-primary: #1a5f7a;
-    --color-primary-dark: #0f3d4f;
-    --color-accent: #ffb703;
-    --color-bg: #f4f7f8;
+    --font-heading: ui-serif, Georgia, "Times New Roman", serif;
+    --font-body: -apple-system, "Avenir Next", Avenir, "Segoe UI", Roboto, sans-serif;
+
+    /* U.S. Capital Wealth brand palette (Brand Guidelines 2025) */
+    --brand-dark-blue: #002a47;
+    --brand-medium-blue: #004975;
+    --brand-dark-blue-green: #0f465a;
+    --brand-gold: #d2aa7e;
+    --brand-light-blue-green: #cad5d4;
+    --brand-light-gold: #f0e8d8;
+    --brand-link-blue: #0076be;
+    --brand-gray-900: #282828;
+    --brand-gray-700: #505050;
+    --brand-gray-500: #878787;
+    --brand-gray-300: #c1c2c0;
+    --brand-gray-200: #dedfdd;
+    --brand-gray-100: #efefee;
+
+    --color-primary: var(--brand-medium-blue);
+    --color-primary-dark: var(--brand-dark-blue);
+    --color-accent: var(--brand-gold);
+    --color-bg: var(--brand-gray-100);
     --color-card: #ffffff;
-    --color-text: #16262b;
-    --color-muted: #5b6b70;
+    --color-text: var(--brand-gray-900);
+    --color-muted: var(--brand-gray-700);
+    --color-border: var(--brand-gray-200);
     --color-danger: #b3261e;
     --radius: 14px;
   }
@@ -24,20 +43,31 @@
   html, body {
     margin: 0; padding: 0; height: 100%;
     background: var(--color-bg); color: var(--color-text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: var(--font-body);
     font-size: var(--font-base);
     user-select: none;
   }
+  body { padding-top: 56px; }
   input, textarea, select { user-select: text; }
+  #brand-header {
+    position: fixed; top: 0; left: 0; right: 0; height: 56px; z-index: 500;
+    display: flex; align-items: baseline; justify-content: center; gap: 8px;
+    background: var(--color-card); border-bottom: 1px solid var(--color-border);
+  }
+  #brand-header .brand-word-serif { font-family: var(--font-heading); font-size: 22px; color: var(--brand-dark-blue); }
+  #brand-header .brand-word-sans { font-family: var(--font-body); font-size: 15px; letter-spacing: 2px; color: var(--brand-medium-blue); font-weight: 600; }
+  .marquee { display: flex; align-items: center; justify-content: center; gap: 10px; max-width: 280px; margin: 0 auto 20px; }
+  .marquee::before, .marquee::after { content: ''; flex: 1; height: 1px; background: var(--brand-gold); }
+  .marquee span { color: var(--brand-gold); font-size: 14px; line-height: 1; }
   #app { min-height: 100%; display: flex; flex-direction: column; }
-  .screen { display: flex; flex: 1; flex-direction: column; align-items: center; padding: 32px 24px; overflow-y: auto; min-height: 100vh; }
+  .screen { display: flex; flex: 1; flex-direction: column; align-items: center; padding: 32px 24px; overflow-y: auto; min-height: calc(100vh - 56px); }
   .screen.hidden { display: none; }
   .screen-inner { width: 100%; max-width: 720px; margin: auto; text-align: center; }
-  h1 { font-size: var(--font-xl); color: var(--color-primary-dark); margin-bottom: 8px; }
-  h2 { font-size: var(--font-large); color: var(--color-primary-dark); margin-bottom: 16px; }
+  h1 { font-family: var(--font-heading); font-weight: 400; font-size: var(--font-xl); color: var(--color-primary-dark); margin-bottom: 8px; }
+  h2 { font-family: var(--font-heading); font-weight: 400; font-size: var(--font-large); color: var(--color-primary-dark); margin-bottom: 16px; }
   p.instructions, p.body-text { color: var(--color-muted); font-size: var(--font-base); margin-bottom: 24px; }
   input[type="text"], input[type="password"], input[type="email"], input[type="tel"], input[type="date"], textarea {
-    width: 100%; padding: 16px; font-size: var(--font-base); border: 2px solid #c9d3d5;
+    width: 100%; padding: 16px; font-size: var(--font-base); border: 2px solid var(--brand-gray-300);
     border-radius: var(--radius); margin-bottom: 16px; background: var(--color-card); color: var(--color-text);
   }
   label { display: block; text-align: left; font-weight: 600; margin-bottom: 6px; color: var(--color-muted); }
@@ -48,8 +78,8 @@
     background: var(--color-primary); color: #fff; cursor: pointer;
   }
   .btn:active { background: var(--color-primary-dark); }
-  .btn-secondary { background: #e4ebec; color: var(--color-text); }
-  .btn-accent { background: var(--color-accent); color: #3a2a00; }
+  .btn-secondary { background: var(--brand-gray-200); color: var(--color-text); }
+  .btn-accent { background: var(--color-accent); color: var(--brand-dark-blue); }
   .btn-danger { background: var(--color-danger); color: #fff; }
   .btn-small { width: auto; min-height: 46px; padding: 10px 18px; font-size: 18px; margin: 4px; display: inline-block; }
   .btn-row { display: flex; gap: 12px; }
@@ -58,25 +88,25 @@
   .results-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
   .result-row {
     text-align: left; padding: 16px 20px; border-radius: var(--radius); background: var(--color-card);
-    border: 2px solid #dfe7e9; font-size: var(--font-base); font-weight: 600; cursor: pointer;
+    border: 2px solid var(--color-border); font-size: var(--font-base); font-weight: 600; cursor: pointer;
   }
   .card-grid { display: flex; flex-direction: column; gap: 14px; margin: 16px 0; }
   .option-card {
-    padding: 22px; border-radius: var(--radius); background: var(--color-card); border: 2px solid #dfe7e9;
+    padding: 22px; border-radius: var(--radius); background: var(--color-card); border: 2px solid var(--color-border);
     font-size: var(--font-large); font-weight: 700; cursor: pointer; min-height: var(--touch-min);
   }
-  .option-card:active, .result-row:active { background: #dff0f4; }
+  .option-card:active, .result-row:active { background: var(--brand-light-blue-green); }
   .error-text { color: var(--color-danger); font-weight: 600; min-height: 24px; margin: 8px 0; }
   .admin-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; justify-content: center; }
-  .admin-tab-btn { padding: 12px 18px; border-radius: 10px; border: 2px solid #cdd8da; background: #fff; font-weight: 600; cursor: pointer; }
+  .admin-tab-btn { padding: 12px 18px; border-radius: 10px; border: 2px solid var(--brand-gray-300); background: #fff; font-weight: 600; cursor: pointer; }
   .admin-tab-btn.active { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
   .admin-panel { display: none; width: 100%; text-align: left; }
   .admin-panel.active { display: block; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 16px; background: #fff; }
-  th, td { border: 1px solid #dfe7e9; padding: 8px 10px; font-size: 16px; text-align: left; }
-  th { background: #eef4f5; }
-  select { padding: 8px; font-size: 15px; border-radius: 8px; border: 1px solid #c9d3d5; }
-  .summary-box { background: #fff; border: 2px solid #dfe7e9; border-radius: var(--radius); padding: 16px; margin: 12px 0; text-align: left; }
+  th, td { border: 1px solid var(--color-border); padding: 8px 10px; font-size: 16px; text-align: left; }
+  th { background: var(--brand-gray-100); }
+  select { padding: 8px; font-size: 15px; border-radius: 8px; border: 1px solid var(--brand-gray-300); }
+  .summary-box { background: #fff; border: 2px solid var(--color-border); border-radius: var(--radius); padding: 16px; margin: 12px 0; text-align: left; }
   #admin-tap-zone { position: fixed; bottom: 0; right: 0; width: 70px; height: 70px; z-index: 999; opacity: 0; }
   .checkbox-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; text-align: left; }
   .checkbox-row input { width: 24px; height: 24px; }
@@ -91,11 +121,16 @@
 </head>
 <body>
 
+<header id="brand-header">
+  <span class="brand-word-serif">U.S. Capital</span><span class="brand-word-sans">WEALTH</span>
+</header>
+
 <div id="app">
 
   <section id="screen-home" class="screen">
     <div class="screen-inner">
       <h1>Welcome</h1>
+      <div class="marquee"><span>&#9733;</span></div>
       <p class="instructions">Type your name below to check in for today's seminar.</p>
       <input id="search-input" type="text" autocomplete="off" autocapitalize="words" placeholder="Start typing your first or last name" />
       <div id="search-hint" class="hint"></div>
@@ -138,6 +173,7 @@
   <section id="screen-thank-you" class="screen hidden">
     <div class="screen-inner">
       <h2>You're All Set!</h2>
+      <div class="marquee"><span>&#9733;</span></div>
       <div id="screen-thank-you-content"></div>
       <button class="btn btn-accent" id="btn-done">Done</button>
     </div>
