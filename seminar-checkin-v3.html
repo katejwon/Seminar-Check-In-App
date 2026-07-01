@@ -178,7 +178,7 @@ textarea{min-height:150px;}
    ========================================================= */
 const CONFIG = {
   DB_NAME: 'seminarCheckinDB',
-  DB_VERSION: 1,
+  DB_VERSION: 2,
   IDLE_TIMEOUT_MS: 60000,
   ADMIN_IDLE_TIMEOUT_MS: 300000,
   MIN_SEARCH_CHARS: 3,
@@ -373,6 +373,10 @@ const DB = {
         if (!db.objectStoreNames.contains('settings')) {
           db.createObjectStore('settings', { keyPath: 'key' });
         }
+        if (!db.objectStoreNames.contains('autoTextLog')) {
+          const s = db.createObjectStore('autoTextLog', { keyPath: 'id' });
+          s.createIndex('status', 'status', { unique: false });
+        }
       };
       req.onsuccess = (e) => { this._db = e.target.result; resolve(this._db); };
       req.onerror = (e) => reject(e.target.error);
@@ -559,6 +563,154 @@ const MessageQueue = {
 };
 
 /* =========================================================
+   SECTION: AUTO-TEXT (direct Global Relay send)
+   Stores the Global Relay API key in IndexedDB and calls the API
+   directly from this device. This is a known, accepted tradeoff:
+   the key is retrievable by anyone with brief access to this
+   device's browser storage inspector. All sends are wrapped so a
+   failure here can never block or interrupt the check-in flow.
+   ========================================================= */
+const AutoText = {
+  _settings: null,
+  DEFAULT_CHECKIN_MESSAGE: 'You are checked in to the U.S. Capital Wealth seminar. We look forward to seeing you today.',
+  DEFAULT_CALL_MESSAGE: 'You are checked in to the U.S. Capital Wealth seminar.',
+
+  async loadSettings() {
+    const [enabled, apiUrl, apiKey, includeCall, messageCheckin, messageCall] = await Promise.all([
+      DB.getSetting('autoTextEnabled'),
+      DB.getSetting('autoTextApiUrl'),
+      DB.getSetting('autoTextApiKey'),
+      DB.getSetting('autoTextIncludeCall'),
+      DB.getSetting('autoTextMessageCheckin'),
+      DB.getSetting('autoTextMessageCall')
+    ]);
+    this._settings = {
+      enabled: !!enabled,
+      apiUrl: apiUrl || '',
+      apiKey: apiKey || '',
+      includeCall: !!includeCall,
+      messageCheckin: messageCheckin || '',
+      messageCall: messageCall || ''
+    };
+    return this._settings;
+  },
+
+  buildMessage(type, callDetails) {
+    const s = this._settings || {};
+    if (type === 'call') {
+      const base = (s.messageCall || '').trim() || this.DEFAULT_CALL_MESSAGE;
+      const callLine = 'Your follow-up call is scheduled for ' + callDetails.friendlyDate +
+        ' during the ' + callDetails.windowLabel + ' window.';
+      return base + '\n' + callLine;
+    }
+    return (s.messageCheckin || '').trim() || this.DEFAULT_CHECKIN_MESSAGE;
+  },
+
+  async _logEntry(entry) {
+    const record = Object.assign({ id: IdUtil.newId('atlog'), timestamp: new Date().toISOString(), failureReason: '' }, entry);
+    await DB.put('autoTextLog', record);
+    return record;
+  },
+
+  async _postToGlobalRelay(settings, phone, message) {
+    const res = await fetch(settings.apiUrl, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + settings.apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: phone, message: message })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+  },
+
+  // Fire-and-forget by design -- callers never await this in the middle of
+  // the attendee-facing flow, and every error path is caught internally.
+  async send(attendee, type, callDetails) {
+    try {
+      const settings = this._settings || await this.loadSettings();
+      if (!settings.apiUrl || !settings.apiKey) return;
+      if (!attendee || !attendee.phone) return;
+      const message = this.buildMessage(type, callDetails);
+      const base = {
+        attendeeId: attendee.id,
+        recipientName: (attendee.firstName || '') + ' ' + (attendee.lastName || ''),
+        recipientPhone: attendee.phone,
+        messageType: type,
+        message: message
+      };
+      if (!navigator.onLine) {
+        await this._logEntry(Object.assign({}, base, { status: 'Pending' }));
+        return;
+      }
+      try {
+        await this._postToGlobalRelay(settings, attendee.phone, message);
+        await this._logEntry(Object.assign({}, base, { status: 'Sent' }));
+      } catch (err) {
+        await this._logEntry(Object.assign({}, base, { status: 'Failed', failureReason: err.message || 'Network error' }));
+      }
+    } catch (outerErr) {
+      // never let an auto-text failure interrupt the check-in flow
+    }
+  },
+
+  async sendTest(phone) {
+    try {
+      const settings = this._settings || await this.loadSettings();
+      if (!settings.apiUrl || !settings.apiKey) return { ok: false, message: 'Save API URL and key first.' };
+      const message = this.buildMessage('checkin');
+      const base = { attendeeId: null, recipientName: 'Test Send', recipientPhone: phone, messageType: 'test', message: message };
+      if (!navigator.onLine) {
+        await this._logEntry(Object.assign({}, base, { status: 'Pending' }));
+        return { ok: false, message: 'No internet connection. Queued as pending.' };
+      }
+      try {
+        await this._postToGlobalRelay(settings, phone, message);
+        await this._logEntry(Object.assign({}, base, { status: 'Sent' }));
+        return { ok: true, message: 'Test text sent.' };
+      } catch (err) {
+        await this._logEntry(Object.assign({}, base, { status: 'Failed', failureReason: err.message || 'Network error' }));
+        return { ok: false, message: 'Failed to send: ' + (err.message || 'Network error') };
+      }
+    } catch (outerErr) {
+      return { ok: false, message: 'Unexpected error.' };
+    }
+  },
+
+  async _retryEntry(entry) {
+    const settings = this._settings || await this.loadSettings();
+    if (!settings.apiUrl || !settings.apiKey) return;
+    if (!entry.recipientPhone || !entry.message) return;
+    try {
+      await this._postToGlobalRelay(settings, entry.recipientPhone, entry.message);
+      await DB.put('autoTextLog', Object.assign({}, entry, { status: 'Sent', timestamp: new Date().toISOString(), failureReason: '' }));
+    } catch (err) {
+      await DB.put('autoTextLog', Object.assign({}, entry, { status: 'Failed', timestamp: new Date().toISOString(), failureReason: err.message || 'Network error' }));
+    }
+  },
+
+  async drainQueue() {
+    try {
+      const settings = this._settings || await this.loadSettings();
+      if (!settings.apiUrl || !settings.apiKey) return;
+      if (!navigator.onLine) return;
+      const log = await DB.getAll('autoTextLog');
+      const toRetry = log.filter(l => l.status === 'Pending' || l.status === 'Failed');
+      for (const entry of toRetry) {
+        await this._retryEntry(entry);
+      }
+    } catch (err) {
+      // best-effort background drain -- never throw
+    }
+  },
+
+  async retryAllFailed() {
+    const log = await DB.getAll('autoTextLog');
+    const failed = log.filter(l => l.status === 'Failed');
+    for (const entry of failed) {
+      await this._retryEntry(entry);
+    }
+  }
+};
+
+/* =========================================================
    SECTION: CHECK-IN FLOW
    ========================================================= */
 const CheckIn = {
@@ -587,6 +739,7 @@ const CheckIn = {
         checkInStatus: 'checked_in',
         checkInTimestamp: now,
         source: 'walk_in',
+        isWalkIn: true,
         assignedTeamMember: '',
         scheduledCallId: null,
         updatedAt: now
@@ -612,6 +765,9 @@ const CheckIn = {
     if (idx >= 0) AppData.attendees[idx] = attendee; else AppData.attendees.push(attendee);
     AppState.currentAttendeeId = attendee.id;
     AppState.isNewGuest = false;
+    if (AutoText._settings && AutoText._settings.enabled && attendee.phone) {
+      AutoText.send(attendee, 'checkin');
+    }
     UI.showScreen('screen-schedule-offer');
   }
 };
@@ -648,6 +804,9 @@ const Scheduler = {
       friendlyDate: AppState.pendingDateFriendly, windowLabel: WINDOW_LABELS[windowKey]
     });
     await DB.writeSchedule(attendee, call, messages);
+    if (AutoText._settings && AutoText._settings.enabled && AutoText._settings.includeCall && attendee.phone) {
+      AutoText.send(attendee, 'call', { friendlyDate: AppState.pendingDateFriendly, windowLabel: WINDOW_LABELS[windowKey] });
+    }
     AppState.thankYouInfo = { declined: false, friendlyDate: AppState.pendingDateFriendly, windowLabel: WINDOW_LABELS[windowKey] };
     UI.showScreen('screen-thank-you');
   }
@@ -1035,7 +1194,9 @@ const UI = {
     container.innerHTML = '';
     AppData.teamMembers = (await DB.getSetting('teamMembers')) || [];
 
-    const tabs = ['Check-Ins', 'Scheduled Calls', 'Import', 'Export', 'Holidays', 'Settings'];
+    await this._renderStatsBar(container);
+
+    const tabs = ['Check-Ins', 'Scheduled Calls', 'Import', 'Export', 'Holidays', 'Auto-Text', 'Settings'];
     const tabBar = el('div', { class: 'admin-tabs' });
     const panels = {};
     tabs.forEach((tabName, idx) => {
@@ -1060,6 +1221,7 @@ const UI = {
     this._renderImportPanel(panels['Import'], panels['Check-Ins']);
     this._renderExportPanel(panels['Export']);
     this._renderHolidaysPanel(panels['Holidays']);
+    await this._renderAutoTextPanel(panels['Auto-Text']);
     this._renderSettingsPanel(panels['Settings']);
   },
 
@@ -1107,7 +1269,7 @@ const UI = {
       });
       table.appendChild(el('tr', {}, [
         el('td', {}, [cb]),
-        el('td', { text: a.firstName + ' ' + a.lastName }),
+        el('td', { text: a.firstName + ' ' + a.lastName + (a.isWalkIn ? ' (Walk-in)' : '') }),
         el('td', { text: a.phone || '' }),
         el('td', { text: a.email || '' }),
         el('td', { text: a.company || '' }),
@@ -1328,6 +1490,177 @@ const UI = {
     panel.appendChild(customList);
   },
 
+  async _renderStatsBar(container) {
+    const [attendees, calls] = [await DB.getAll('attendees'), await DB.getAll('scheduledCalls')];
+    const totalCheckedIn = attendees.filter(a => a.checkInStatus === 'checked_in').length;
+    const totalScheduled = calls.filter(c => c.status === 'scheduled').length;
+    const totalWalkIns = attendees.filter(a => a.isWalkIn === true).length;
+    const statsBar = el('div', { class: 'btn-row' });
+    [
+      ['Total Checked In', totalCheckedIn],
+      ['Total Scheduled Calls', totalScheduled],
+      ['Total Walk-Ins', totalWalkIns]
+    ].forEach(([label, count]) => {
+      const box = el('div', { class: 'summary-box', style: 'flex:1;text-align:center;' });
+      box.appendChild(el('div', { text: String(count), style: 'font-size:32px;font-weight:700;color:var(--uscw-navy);' }));
+      box.appendChild(el('div', { text: label }));
+      statsBar.appendChild(box);
+    });
+    container.appendChild(statsBar);
+  },
+
+  async _renderAutoTextPanel(panel) {
+    panel.innerHTML = '';
+    await AutoText.loadSettings();
+    const s = AutoText._settings;
+
+    panel.appendChild(el('span', { class: 'eyebrow', text: 'Credentials' }));
+
+    const urlField = el('div', { class: 'field' });
+    urlField.appendChild(el('label', { text: 'Global Relay REST API URL' }));
+    const urlInput = el('input', { type: 'text' });
+    urlInput.value = s.apiUrl;
+    urlField.appendChild(urlInput);
+    panel.appendChild(urlField);
+
+    const keyField = el('div', { class: 'field' });
+    keyField.appendChild(el('label', { text: 'Global Relay API Key' }));
+    const keyInput = el('input', { type: 'password' });
+    keyInput.value = s.apiKey;
+    keyField.appendChild(keyInput);
+    const toggleKeyBtn = el('button', {
+      class: 'btn btn-secondary btn-small', text: 'Show', onclick: () => {
+        if (keyInput.type === 'password') { keyInput.type = 'text'; toggleKeyBtn.textContent = 'Hide'; }
+        else { keyInput.type = 'password'; toggleKeyBtn.textContent = 'Show'; }
+      }
+    });
+    keyField.appendChild(toggleKeyBtn);
+    panel.appendChild(keyField);
+
+    const credStatus = el('div', { class: 'summary-box' });
+    credStatus.style.display = 'none';
+    panel.appendChild(el('button', {
+      class: 'btn btn-accent btn-small', text: 'Save Credentials', onclick: async () => {
+        await DB.setSetting('autoTextApiUrl', urlInput.value.trim());
+        await DB.setSetting('autoTextApiKey', keyInput.value.trim());
+        await AutoText.loadSettings();
+        credStatus.style.display = 'block';
+        credStatus.textContent = 'Credentials saved.';
+      }
+    }));
+    panel.appendChild(credStatus);
+
+    panel.appendChild(el('span', { class: 'eyebrow', text: 'Options' }));
+
+    const enableCheckbox = el('input', { type: 'checkbox' });
+    enableCheckbox.checked = s.enabled;
+    enableCheckbox.addEventListener('change', async () => {
+      await DB.setSetting('autoTextEnabled', enableCheckbox.checked);
+      AutoText._settings.enabled = enableCheckbox.checked;
+    });
+    panel.appendChild(el('div', { class: 'checkbox-row' }, [enableCheckbox, el('label', { text: 'Enable Auto-Text' })]));
+
+    const includeCallCheckbox = el('input', { type: 'checkbox' });
+    includeCallCheckbox.checked = s.includeCall;
+    includeCallCheckbox.addEventListener('change', async () => {
+      await DB.setSetting('autoTextIncludeCall', includeCallCheckbox.checked);
+      AutoText._settings.includeCall = includeCallCheckbox.checked;
+    });
+    panel.appendChild(el('div', { class: 'checkbox-row' }, [includeCallCheckbox, el('label', { text: 'Include scheduled call date and time in confirmation text' })]));
+
+    panel.appendChild(el('span', { class: 'eyebrow', text: 'Message Templates' }));
+
+    panel.appendChild(el('label', { text: 'Check-in confirmation message' }));
+    const checkinTextarea = el('textarea', { rows: 4 });
+    checkinTextarea.value = s.messageCheckin;
+    panel.appendChild(checkinTextarea);
+    panel.appendChild(el('button', {
+      class: 'btn btn-secondary btn-small', text: 'Save Message', onclick: async () => {
+        await DB.setSetting('autoTextMessageCheckin', checkinTextarea.value.trim());
+        AutoText._settings.messageCheckin = checkinTextarea.value.trim();
+      }
+    }));
+    panel.appendChild(el('label', { text: 'Preview' }));
+    const checkinPreview = el('div', { class: 'summary-box' });
+    const renderCheckinPreview = () => {
+      checkinPreview.textContent = checkinTextarea.value.trim() || AutoText.DEFAULT_CHECKIN_MESSAGE;
+    };
+    checkinTextarea.addEventListener('input', renderCheckinPreview);
+    panel.appendChild(checkinPreview);
+    renderCheckinPreview();
+
+    panel.appendChild(el('label', { text: 'Check-in with call message' }));
+    const callTextarea = el('textarea', { rows: 4 });
+    callTextarea.value = s.messageCall;
+    panel.appendChild(callTextarea);
+    panel.appendChild(el('button', {
+      class: 'btn btn-secondary btn-small', text: 'Save Message', onclick: async () => {
+        await DB.setSetting('autoTextMessageCall', callTextarea.value.trim());
+        AutoText._settings.messageCall = callTextarea.value.trim();
+      }
+    }));
+    panel.appendChild(el('label', { text: 'Preview' }));
+    const callPreview = el('div', { class: 'summary-box' });
+    const sampleCallDate = BusinessDays.formatFriendlyDate(new Date(2026, 0, 12));
+    const renderCallPreview = () => {
+      const base = callTextarea.value.trim() || AutoText.DEFAULT_CALL_MESSAGE;
+      const callLine = 'Your follow-up call is scheduled for ' + sampleCallDate + ' during the Morning window.';
+      callPreview.textContent = base + '\n' + callLine;
+    };
+    callTextarea.addEventListener('input', renderCallPreview);
+    panel.appendChild(callPreview);
+    renderCallPreview();
+
+    panel.appendChild(el('span', { class: 'eyebrow', text: 'Send Test' }));
+    const testField = el('div', { class: 'field' });
+    testField.appendChild(el('label', { text: 'Phone number' }));
+    const testPhoneInput = el('input', { type: 'tel' });
+    testField.appendChild(testPhoneInput);
+    panel.appendChild(testField);
+    const testStatus = el('div', { class: 'summary-box' });
+    testStatus.style.display = 'none';
+    panel.appendChild(el('button', {
+      class: 'btn btn-accent btn-small', text: 'Send Test', onclick: async () => {
+        const phone = testPhoneInput.value.trim();
+        if (!phone) { testStatus.style.display = 'block'; testStatus.textContent = 'Enter a phone number first.'; return; }
+        const result = await AutoText.sendTest(phone);
+        testStatus.style.display = 'block';
+        testStatus.textContent = result.message;
+        await renderLog();
+      }
+    }));
+    panel.appendChild(testStatus);
+
+    panel.appendChild(el('span', { class: 'eyebrow', text: 'Send Log' }));
+    panel.appendChild(el('button', {
+      class: 'btn btn-secondary btn-small', text: 'Retry All Failed', onclick: async () => {
+        await AutoText.retryAllFailed();
+        await renderLog();
+      }
+    }));
+    const logContainer = el('div');
+    panel.appendChild(logContainer);
+
+    const renderLog = async () => {
+      logContainer.innerHTML = '';
+      const log = await DB.getAll('autoTextLog');
+      log.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      const recent = log.slice(0, 20);
+      const table = el('table');
+      table.appendChild(el('tr', {}, ['Recipient', 'Status', 'Timestamp', 'Failure Reason'].map(h => el('th', { text: h }))));
+      recent.forEach(entry => {
+        table.appendChild(el('tr', {}, [
+          el('td', { text: entry.recipientName || '' }),
+          el('td', { text: entry.status }),
+          el('td', { text: new Date(entry.timestamp).toLocaleString() }),
+          el('td', { text: entry.failureReason || '' })
+        ]));
+      });
+      logContainer.appendChild(table);
+    };
+    await renderLog();
+  },
+
   _renderSettingsPanel(panel) {
     panel.appendChild(el('h2', { text: 'Team Members' }));
     const teamList = el('div');
@@ -1430,6 +1763,10 @@ async function init() {
 
   App.holidayOverrides = (await DB.getSetting('holidayOverrides')) || { addedCustom: [], removedDefaults: [] };
   App.rebuildHolidaySet();
+
+  await AutoText.loadSettings();
+  AutoText.drainQueue();
+  window.addEventListener('online', () => AutoText.drainQueue());
 
   IdleTimer.init();
   UI.forceShowHome();
