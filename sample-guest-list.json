@@ -6,7 +6,9 @@
       "phone": "555-301-0201",
       "email": "alan.brooks@example.com",
       "company": "Brooks Family Trust",
-      "retirementDate": "2028"
+      "retirementDate": "2028",
+      "spouseFirstName": "Emily",
+      "spouseLastName": "Brooks"
     },
     {
       "firstName": "Alan",
@@ -22,7 +24,9 @@
       "phone": "555-301-0203",
       "email": "nora.feldman@example.com",
       "company": "",
-      "retirementDate": "2027"
+      "retirementDate": "2027",
+      "spouseFirstName": "Sam",
+      "spouseLastName": "Feldman"
     },
     {
       "firstName": "David",
@@ -31,6 +35,25 @@
       "email": "david.kim@example.com",
       "company": "Kim Orthodontics",
       "retirementDate": "2029"
+    },
+    {
+      "firstName": "Grace",
+      "lastName": "Turner",
+      "phone": "555-301-0204",
+      "email": "grace.turner@example.com",
+      "company": "Turner Capital",
+      "retirementDate": "2032",
+      "spouseFirstName": "Henry",
+      "spouseLastName": "Turner"
+    },
+    {
+      "firstName": "Marcus",
+      "lastName": "Webb",
+      "phone": "555-301-0205",
+      "email": "marcus.webb@example.com",
+      "company": "Webb & Associates",
+      "retirementDate": "2026",
+      "spouseLastName": "Webb"
     }
   ]
 }
