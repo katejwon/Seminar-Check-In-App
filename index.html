@@ -2234,12 +2234,12 @@ document.getElementById('staff-access-btn').addEventListener('click', () => {
    SECTION: BOOTSTRAP
    ========================================================= */
 /* =========================================================
-   Keyboard (iPad Safari) — visualViewport-driven field clearance
+   Keyboard (iPad Safari) — dismiss on tap-out/drag, hide fixed bars, Enter-to-advance
+   (no auto-scroll or page padding: that motion was intentionally removed)
    ========================================================= */
 const Keyboard = {
   open: false,
   _touchScroll: false,
-  _scrollTimer: null,
 
   isField(node) {
     if (!node || node.nodeType !== 1) return false;
@@ -2252,21 +2252,11 @@ const Keyboard = {
     return node && (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA');
   },
 
-  getScroller() {
-    return document.querySelector('.screen:not(.hidden)');
-  },
-
   init() {
     if (!window.visualViewport) return;
     const vv = window.visualViewport;
     const onChange = () => this.handleViewport();
     vv.addEventListener('resize', onChange);
-    vv.addEventListener('scroll', onChange);
-
-    // Scroll a newly focused field into the upper third of the visible viewport.
-    document.addEventListener('focusin', (e) => {
-      if (this.isTypeable(e.target)) this.scheduleScroll(e.target);
-    });
 
     // Tap outside any input dismisses the keyboard.
     document.addEventListener('pointerdown', (e) => {
@@ -2288,45 +2278,16 @@ const Keyboard = {
     const vv = window.visualViewport;
     const keyboardHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
     const isOpen = keyboardHeight > 120;
+    // Track open state (used to dismiss on drag-scroll) and hide the fixed bars
+    // while the keyboard is up. The page is NOT scrolled or padded — that motion
+    // was intentionally removed, so the keyboard opens with no page movement.
     if (isOpen) {
       this.open = true;
       document.body.classList.add('keyboard-open');
-      // Reserve scroll room at the document bottom rather than on the centered
-      // .screen (padding there shifts the vertically-centered content and jitters).
-      document.body.style.paddingBottom = keyboardHeight + 'px';
-      // Re-position once the viewport settles; scheduleScroll debounces the burst
-      // of resize/scroll events so we don't re-scroll on every tick (the jiggle).
-      if (this.isTypeable(document.activeElement)) this.scheduleScroll(document.activeElement);
     } else if (this.open) {
       this.open = false;
       document.body.classList.remove('keyboard-open');
-      document.body.style.paddingBottom = '';
     }
-  },
-
-  // Collapse the flurry of focus + viewport-resize events into a single scroll
-  // after things settle, so the field glides into place once instead of jittering.
-  scheduleScroll(field) {
-    if (this._scrollTimer) clearTimeout(this._scrollTimer);
-    this._scrollTimer = setTimeout(() => {
-      this._scrollTimer = null;
-      if (field && this.isTypeable(field) && document.activeElement === field) {
-        this.scrollFieldIntoView(field);
-      }
-    }, 150);
-  },
-
-  scrollFieldIntoView(field) {
-    requestAnimationFrame(() => {
-      const vv = window.visualViewport;
-      const height = vv ? vv.height : window.innerHeight;
-      const offsetTop = vv ? vv.offsetTop : 0;
-      const rect = field.getBoundingClientRect();
-      const targetTop = offsetTop + height / 3;
-      const delta = rect.top - targetTop;
-      // Larger dead-zone so a settled re-check is a no-op (prevents micro-jitter).
-      if (Math.abs(delta) > 16) window.scrollBy({ top: delta, left: 0, behavior: 'smooth' });
-    });
   },
 
   // Wire enterkeyhint + Enter-to-advance across an ordered list of fields.
