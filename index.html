@@ -37,6 +37,9 @@ input,textarea,select{user-select:text;}
 .screen{display:flex;flex:1;flex-direction:column;align-items:center;padding:44px 24px;overflow-y:auto;min-height:calc(100vh - 64px);}
 .screen.hidden{display:none;}
 .screen-inner{width:100%;max-width:680px;margin:auto;text-align:center;background:#fff;border:1px solid var(--hairline);border-radius:0;padding:56px 48px;box-shadow:0 16px 48px rgba(0,24,41,0.28);}
+/* Sit the Welcome and Staff Access cards a bit higher so a portrait keyboard
+   doesn't cover the input. vh-based, so it lifts more in portrait than landscape. */
+#screen-home,#screen-admin-gate{padding-bottom:30vh;}
 h1,h2{font-family:var(--font-display);font-weight:300;color:var(--uscw-navy);letter-spacing:0.005em;margin:0 0 12px;text-wrap:balance;}
 h1{font-size:46px;line-height:1.08;}
 h2{font-size:34px;font-weight:400;}
