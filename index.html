@@ -2234,12 +2234,15 @@ document.getElementById('staff-access-btn').addEventListener('click', () => {
    SECTION: BOOTSTRAP
    ========================================================= */
 /* =========================================================
-   Keyboard (iPad Safari) — dismiss on tap-out/drag, hide fixed bars, Enter-to-advance
-   (no auto-scroll or page padding: that motion was intentionally removed)
+   Keyboard (iPad Safari) — clear the focused field above the keyboard with a
+   single settled scroll (no feedback loop), dismiss on tap-out/drag, hide fixed
+   bars, Enter-to-advance
    ========================================================= */
 const Keyboard = {
   open: false,
   _touchScroll: false,
+  _scrollTimer: null,
+  _programmaticScroll: false,
 
   isField(node) {
     if (!node || node.nodeType !== 1) return false;
@@ -2255,8 +2258,16 @@ const Keyboard = {
   init() {
     if (!window.visualViewport) return;
     const vv = window.visualViewport;
-    const onChange = () => this.handleViewport();
-    vv.addEventListener('resize', onChange);
+    // Only 'resize' — never 'scroll'. A visualViewport 'scroll' listener would
+    // re-fire during our own programmatic correction and create the oscillation.
+    vv.addEventListener('resize', () => this.handleViewport());
+
+    // Scroll a newly focused field into view exactly once, after the keyboard
+    // animation and iOS's own auto-scroll have settled.
+    document.addEventListener('focusin', (e) => {
+      if (this.isTypeable(e.target)) this.scheduleFieldScroll(e.target);
+    });
+    document.addEventListener('focusout', () => this.cancelFieldScroll());
 
     // Tap outside any input dismisses the keyboard.
     document.addEventListener('pointerdown', (e) => {
@@ -2264,9 +2275,11 @@ const Keyboard = {
       if (this.isField(a) && !this.isField(e.target)) a.blur();
     }, true);
 
-    // A real user drag-scroll dismisses the keyboard (programmatic scrolls do not set this flag).
+    // A real user drag-scroll dismisses the keyboard. Our own programmatic
+    // correction sets _programmaticScroll so its scroll event is ignored here.
     window.addEventListener('touchmove', () => { this._touchScroll = true; }, { passive: true });
     window.addEventListener('scroll', () => {
+      if (this._programmaticScroll) { this._programmaticScroll = false; this._touchScroll = false; return; }
       if (this._touchScroll && this.open && this.isField(document.activeElement)) {
         document.activeElement.blur();
       }
@@ -2278,15 +2291,49 @@ const Keyboard = {
     const vv = window.visualViewport;
     const keyboardHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
     const isOpen = keyboardHeight > 120;
-    // Track open state (used to dismiss on drag-scroll) and hide the fixed bars
-    // while the keyboard is up. The page is NOT scrolled or padded — that motion
-    // was intentionally removed, so the keyboard opens with no page movement.
+    // ONLY manage the keyboard-open class and the bottom scroll-clearance padding.
+    // handleViewport never scrolls — the field is positioned by a single settled
+    // scroll (scheduleFieldScroll), which is what prevents the feedback loop.
     if (isOpen) {
       this.open = true;
       document.body.classList.add('keyboard-open');
+      document.body.style.paddingBottom = keyboardHeight + 'px';
     } else if (this.open) {
       this.open = false;
       document.body.classList.remove('keyboard-open');
+      document.body.style.paddingBottom = '';
+    }
+  },
+
+  // Debounce to a single scroll ~350ms after focus, once the keyboard animation
+  // and iOS's own auto-scroll have finished. Any pending scroll is cancelled on a
+  // new focus or on blur, so rapid field switching can't stack corrections.
+  scheduleFieldScroll(field) {
+    this.cancelFieldScroll();
+    this._scrollTimer = setTimeout(() => {
+      this._scrollTimer = null;
+      if (field && this.isTypeable(field) && document.activeElement === field) {
+        this.scrollFieldIntoView(field);
+      }
+    }, 350);
+  },
+
+  cancelFieldScroll() {
+    if (this._scrollTimer) { clearTimeout(this._scrollTimer); this._scrollTimer = null; }
+  },
+
+  scrollFieldIntoView(field) {
+    const vv = window.visualViewport;
+    const height = vv ? vv.height : window.innerHeight;
+    const offsetTop = vv ? vv.offsetTop : 0;
+    const rect = field.getBoundingClientRect();
+    const targetTop = offsetTop + height / 3;
+    const delta = rect.top - targetTop;
+    if (Math.abs(delta) > 16) {
+      // Flag the correction so the drag-dismiss listener ignores its scroll event,
+      // then jump instantly ('auto') so nothing can interrupt or re-trigger it.
+      this._programmaticScroll = true;
+      window.scrollBy({ top: delta, left: 0, behavior: 'auto' });
     }
   },
 
