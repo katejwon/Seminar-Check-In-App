@@ -5,9 +5,13 @@ const CACHE = 'uscw-checkin-v5';
 
 // Paths are relative to this script's location, so they resolve correctly under
 // the GitHub Pages subpath (…/Seminar-Check-In-App/).
-// index2.html is the primary app shell (matches manifest start_url).
+// index2.html is the primary app shell (matches manifest start_url). './' and
+// ./index.html stay cached too so any already-installed home-screen icon that
+// still launches the old root keeps working offline until it's re-added.
 const PRECACHE = [
   './index2.html',
+  './',
+  './index.html',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
