@@ -1,7 +1,7 @@
 /* USCW Seminar Check-In — service worker
    Cache-first for the app shell so the kiosk runs fully offline once installed.
    Bump CACHE to ship an update; old caches are purged on activate. */
-const CACHE = 'uscw-checkin-v1';
+const CACHE = 'uscw-checkin-v2';
 
 // Paths are relative to this script's location, so they resolve correctly under
 // the GitHub Pages subpath (…/Seminar-Check-In-App/).

@@ -2239,6 +2239,7 @@ document.getElementById('staff-access-btn').addEventListener('click', () => {
 const Keyboard = {
   open: false,
   _touchScroll: false,
+  _scrollTimer: null,
 
   isField(node) {
     if (!node || node.nodeType !== 1) return false;
@@ -2264,7 +2265,7 @@ const Keyboard = {
 
     // Scroll a newly focused field into the upper third of the visible viewport.
     document.addEventListener('focusin', (e) => {
-      if (this.isTypeable(e.target)) this.scrollFieldIntoView(e.target);
+      if (this.isTypeable(e.target)) this.scheduleScroll(e.target);
     });
 
     // Tap outside any input dismisses the keyboard.
@@ -2290,14 +2291,29 @@ const Keyboard = {
     if (isOpen) {
       this.open = true;
       document.body.classList.add('keyboard-open');
-      const scroller = this.getScroller();
-      if (scroller) scroller.style.paddingBottom = keyboardHeight + 'px';
-      if (this.isTypeable(document.activeElement)) this.scrollFieldIntoView(document.activeElement);
+      // Reserve scroll room at the document bottom rather than on the centered
+      // .screen (padding there shifts the vertically-centered content and jitters).
+      document.body.style.paddingBottom = keyboardHeight + 'px';
+      // Re-position once the viewport settles; scheduleScroll debounces the burst
+      // of resize/scroll events so we don't re-scroll on every tick (the jiggle).
+      if (this.isTypeable(document.activeElement)) this.scheduleScroll(document.activeElement);
     } else if (this.open) {
       this.open = false;
       document.body.classList.remove('keyboard-open');
-      document.querySelectorAll('.screen').forEach(s => { s.style.paddingBottom = ''; });
+      document.body.style.paddingBottom = '';
     }
+  },
+
+  // Collapse the flurry of focus + viewport-resize events into a single scroll
+  // after things settle, so the field glides into place once instead of jittering.
+  scheduleScroll(field) {
+    if (this._scrollTimer) clearTimeout(this._scrollTimer);
+    this._scrollTimer = setTimeout(() => {
+      this._scrollTimer = null;
+      if (field && this.isTypeable(field) && document.activeElement === field) {
+        this.scrollFieldIntoView(field);
+      }
+    }, 150);
   },
 
   scrollFieldIntoView(field) {
@@ -2308,7 +2324,8 @@ const Keyboard = {
       const rect = field.getBoundingClientRect();
       const targetTop = offsetTop + height / 3;
       const delta = rect.top - targetTop;
-      if (Math.abs(delta) > 4) window.scrollBy({ top: delta, left: 0, behavior: 'smooth' });
+      // Larger dead-zone so a settled re-check is a no-op (prevents micro-jitter).
+      if (Math.abs(delta) > 16) window.scrollBy({ top: delta, left: 0, behavior: 'smooth' });
     });
   },
 
