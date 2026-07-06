@@ -5,7 +5,7 @@
   "orientation": "landscape",
   "background_color": "#002a47",
   "theme_color": "#002a47",
-  "start_url": "./",
+  "start_url": "./index2.html",
   "scope": "./",
   "icons": [
     {

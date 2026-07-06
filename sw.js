@@ -1,13 +1,13 @@
 /* USCW Seminar Check-In — service worker
    Cache-first for the app shell so the kiosk runs fully offline once installed.
    Bump CACHE to ship an update; old caches are purged on activate. */
-const CACHE = 'uscw-checkin-v4';
+const CACHE = 'uscw-checkin-v5';
 
 // Paths are relative to this script's location, so they resolve correctly under
 // the GitHub Pages subpath (…/Seminar-Check-In-App/).
+// index2.html is the primary app shell (matches manifest start_url).
 const PRECACHE = [
-  './',
-  './index.html',
+  './index2.html',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
