@@ -2324,6 +2324,10 @@ const Keyboard = {
   },
 
   scrollFieldIntoView(field) {
+    // The Welcome (home) and Staff Access (admin gate) cards are short and
+    // centered; never scroll the page on those screens — leave them still.
+    const screen = field.closest && field.closest('.screen');
+    if (screen && (screen.id === 'screen-home' || screen.id === 'screen-admin-gate')) return;
     const vv = window.visualViewport;
     const height = vv ? vv.height : window.innerHeight;
     const offsetTop = vv ? vv.offsetTop : 0;
