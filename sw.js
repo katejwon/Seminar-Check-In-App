@@ -1,17 +1,14 @@
 /* USCW Seminar Check-In — service worker
-   Cache-first for the app shell so the kiosk runs fully offline once installed.
-   Bump CACHE to ship an update; old caches are purged on activate. */
-const CACHE = 'uscw-checkin-v11';
+   The app is now online-first (data lives in Supabase), so the shell is served
+   network-first: signed-in kiosks always load the latest app when online, and
+   fall back to the cached shell only if the network is unavailable.
+   Bump CACHE to retire old caches. */
+const CACHE = 'uscw-checkin-v12';
 
 // Paths are relative to this script's location, so they resolve correctly under
 // the GitHub Pages subpath (…/Seminar-Check-In-App/).
-// index2.html is the primary app shell (matches manifest start_url). './' and
-// ./index.html stay cached too so any already-installed home-screen icon that
-// still launches the old root keeps working offline until it's re-added.
 const PRECACHE = [
   './index2.html',
-  './',
-  './index.html',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
@@ -36,15 +33,19 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  // Non-GET (e.g. Global Relay / Calendly POSTs) is left to the network entirely.
+  // Non-GET (e.g. Supabase / LeadConnector POSTs) is left to the network entirely.
   if (req.method !== 'GET') return;
-  // Only manage our own origin's shell assets. Cross-origin requests (the Calendly embed
-  // script + iframe, etc.) go straight to the network untouched so the service worker can
-  // never interfere with them.
+  // Only manage our own origin's shell assets. Cross-origin requests (Supabase API,
+  // the supabase-js CDN, the LeadConnector booking iframe, etc.) go straight to the
+  // network untouched so the service worker can never interfere with them.
   if (new URL(req.url).origin !== self.location.origin) return;
-  // Cache-first: serve precached shell assets offline; anything else falls through
-  // to the network and is never cached (live API GETs must not be served stale).
+  // Network-first: always prefer the live shell so app updates ship immediately;
+  // refresh the cached copy on success and fall back to cache only when offline.
   event.respondWith(
-    caches.match(req, { ignoreSearch: true }).then((cached) => cached || fetch(req))
+    fetch(req).then((res) => {
+      const copy = res.clone();
+      caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+      return res;
+    }).catch(() => caches.match(req, { ignoreSearch: true }))
   );
 });

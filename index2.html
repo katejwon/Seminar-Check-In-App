@@ -109,20 +109,20 @@ label{display:block;text-align:left;font-weight:600;font-size:14px;letter-spacin
 .checkbox-row{margin:10px 0;}
 .checkbox-row label{margin-bottom:0;font-weight:400;font-size:16px;letter-spacing:0;color:var(--uscw-gray-900);}
 .checkbox-row input[type=checkbox]{flex:none;margin:0;accent-color:var(--uscw-navy);}
-/* Calendly inline embed (schedule-a-call screen). ~540px card so live availability fits without inner scroll. */
+/* LeadConnector booking embed (schedule-a-call screen). ~540px card so live availability fits without inner scroll. */
 .schedule-embed-wrap{margin:8px 0 22px;min-height:540px;}
-.calendly-inline-widget{min-width:280px;min-height:540px;width:100%;}
+.booking-inline-widget{min-width:280px;min-height:540px;width:100%;border:none;display:block;}
 .schedule-help{color:var(--uscw-gray-700);font-size:14px;margin:6px 0 0;text-align:left;}
 /* Scheduled Calls: source badges + status dots. */
 .src-badge{display:inline-block;padding:3px 10px;border-radius:0;font-family:var(--font-sans);font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;}
-.src-badge--calendly{background:var(--uscw-gold-light);border:1px solid var(--uscw-gold);color:#7a5a2e;}
+.src-badge--booking{background:var(--uscw-gold-light);border:1px solid var(--uscw-gold);color:#7a5a2e;}
 .src-badge--manual{background:#fff;border:1px solid var(--uscw-gray-300);color:var(--uscw-gray-700);}
 .status-cell{display:flex;align-items:center;gap:8px;white-space:nowrap;}
 .status-dot{width:10px;height:10px;border-radius:50%;flex:none;display:inline-block;}
 .status-dot--booked{background:#5f8a52;}
 .status-dot--requested{background:#d2aa7e;}
 .status-dot--canceled{background:#c1c2c0;}
-.calendly-sync{font-family:var(--font-sans);font-size:12px;color:var(--uscw-gray-700);text-align:right;margin:0 0 10px;}
+.booking-sync{font-family:var(--font-sans);font-size:12px;color:var(--uscw-gray-700);text-align:right;margin:0 0 10px;}
 input[type=file]{width:100%;padding:14px;border:1px dashed var(--uscw-gray-300);background:var(--uscw-gray-100);font-family:var(--font-sans);font-size:16px;color:var(--uscw-gray-700);margin-bottom:14px;border-radius:0;}
 input[type=file]::file-selector-button{border:1px solid var(--uscw-navy);background:var(--uscw-navy);color:#fff;font-family:var(--font-sans);font-size:12px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;padding:10px 16px;margin-right:14px;cursor:pointer;border-radius:0;}
 .import-block{border:1px solid var(--hairline);padding:22px 22px 14px;margin:0 0 18px;background:#fff;}
@@ -234,14 +234,37 @@ body.keyboard-open #staff-access-btn{display:none;}
     </div>
   </section>
 
+  <section id="screen-login" class="screen hidden">
+    <div class="screen-inner">
+      <span class="eyebrow">Staff Sign-In</span>
+      <h1>USCW Check-In</h1>
+      <div id="screen-login-content"></div>
+    </div>
+  </section>
+
 </div>
 
 <button id="staff-access-btn" type="button">Staff Access</button>
 <div id="print-summary"></div>
 
+<!-- Supabase client (online backend). Parser-blocking + placed before the app
+     script so window.supabase.createClient is ready when the app runs. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.2/dist/umd/supabase.js"></script>
+<script>
+  // Public config. The anon key is safe to ship: it only grants what row-level
+  // security allows, and RLS denies everything to non-authenticated visitors.
+  window.__SB_URL  = 'https://yoegkistqqloqhjsruer.supabase.co';
+  window.__SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlvZWdraXN0cXFsb3FoanNydWVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM5NjM2OTAsImV4cCI6MjA5OTUzOTY5MH0.kShB4exoYxK7W_WwDP6sESBqIWlZUhckK_wkn3CdooA';
+</script>
 <script>
 (function () {
 "use strict";
+
+// Single Supabase client for the whole app. Session is persisted in
+// localStorage so a signed-in kiosk stays signed in across reloads.
+const SB = window.supabase.createClient(window.__SB_URL, window.__SB_ANON, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
+});
 
 
 /* =========================================================
@@ -332,100 +355,62 @@ function downloadBlob(content, filename, mimeType) {
 }
 
 /* =========================================================
-   SECTION: DATA LAYER (IndexedDB)
+   SECTION: DATA LAYER (Supabase)
+   Same public API the app has always used (get/getAll/put/putMany/
+   writeCheckIn/writeSchedule/getSetting/setSetting/wipeAttendeeData/
+   deleteMany/deleteAttendeesCascade) — now backed by Supabase Postgres so
+   every device shares one live dataset. Table columns are named to match the
+   record fields exactly, so records round-trip without any mapping.
    ========================================================= */
-function reqToPromise(req) {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
 const DB = {
-  _db: null,
-  open() {
-    if (this._db) return Promise.resolve(this._db);
-    return new Promise((resolve, reject) => {
-      const req = indexedDB.open(CONFIG.DB_NAME, CONFIG.DB_VERSION);
-      req.onupgradeneeded = (e) => {
-        const db = e.target.result;
-        if (!db.objectStoreNames.contains('attendees')) {
-          const s = db.createObjectStore('attendees', { keyPath: 'id' });
-          s.createIndex('searchName', 'searchName', { unique: false });
-          s.createIndex('checkInStatus', 'checkInStatus', { unique: false });
-        }
-        if (!db.objectStoreNames.contains('scheduledCalls')) {
-          const s = db.createObjectStore('scheduledCalls', { keyPath: 'id' });
-          s.createIndex('attendeeId', 'attendeeId', { unique: false });
-        }
-        if (!db.objectStoreNames.contains('messageQueue')) {
-          const s = db.createObjectStore('messageQueue', { keyPath: 'id' });
-          s.createIndex('attendeeId', 'attendeeId', { unique: false });
-          s.createIndex('status', 'status', { unique: false });
-        }
-        if (!db.objectStoreNames.contains('settings')) {
-          db.createObjectStore('settings', { keyPath: 'key' });
-        }
-        // v3: party/household grouping. Add partyId index to attendees for both
-        // fresh installs and upgrades from v2 (where the store already exists).
-        if (db.objectStoreNames.contains('attendees')) {
-          const attStore = e.target.transaction.objectStore('attendees');
-          if (!attStore.indexNames.contains('partyId')) {
-            attStore.createIndex('partyId', 'partyId', { unique: false });
-          }
-        }
-      };
-      req.onsuccess = (e) => { this._db = e.target.result; resolve(this._db); };
-      req.onerror = (e) => reject(e.target.error);
-    });
-  },
+  // Primary key column differs for the settings key/value table.
+  _pk(store) { return store === 'settings' ? 'key' : 'id'; },
+  // Kept for API compatibility with old call sites; the client is always ready.
+  open() { return Promise.resolve(SB); },
   async get(storeName, key) {
-    const db = await this.open();
-    return reqToPromise(db.transaction(storeName, 'readonly').objectStore(storeName).get(key));
+    const { data, error } = await SB.from(storeName).select('*').eq(this._pk(storeName), key).maybeSingle();
+    if (error) throw error;
+    return data || undefined;
   },
   async getAll(storeName) {
-    const db = await this.open();
-    return reqToPromise(db.transaction(storeName, 'readonly').objectStore(storeName).getAll());
+    // PostgREST caps rows per response (default 1000). Page through so large
+    // attendee lists load completely.
+    const pageSize = 1000;
+    let from = 0, all = [];
+    for (;;) {
+      const { data, error } = await SB.from(storeName).select('*').range(from, from + pageSize - 1);
+      if (error) throw error;
+      all = all.concat(data || []);
+      if (!data || data.length < pageSize) break;
+      from += pageSize;
+    }
+    return all;
   },
   async put(storeName, value) {
-    const db = await this.open();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readwrite');
-      tx.objectStore(storeName).put(value);
-      tx.oncomplete = () => resolve(value);
-      tx.onerror = () => reject(tx.error);
-    });
+    const { error } = await SB.from(storeName).upsert(value, { onConflict: this._pk(storeName) });
+    if (error) throw error;
+    return value;
   },
   async putMany(storeName, values) {
-    const db = await this.open();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readwrite');
-      const store = tx.objectStore(storeName);
-      values.forEach(v => store.put(v));
-      tx.oncomplete = () => resolve(values);
-      tx.onerror = () => reject(tx.error);
-    });
+    if (!values || !values.length) return values;
+    const { error } = await SB.from(storeName).upsert(values, { onConflict: this._pk(storeName) });
+    if (error) throw error;
+    return values;
   },
   async writeCheckIn(attendee, messages) {
-    const db = await this.open();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(['attendees', 'messageQueue'], 'readwrite');
-      tx.objectStore('attendees').put(attendee);
-      messages.forEach(m => tx.objectStore('messageQueue').add(m));
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    await this.put('attendees', attendee);
+    if (messages && messages.length) {
+      const { error } = await SB.from('messageQueue').insert(messages);
+      if (error) throw error;
+    }
   },
   async writeSchedule(attendee, call, messages) {
-    const db = await this.open();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(['attendees', 'scheduledCalls', 'messageQueue'], 'readwrite');
-      tx.objectStore('attendees').put(attendee);
-      tx.objectStore('scheduledCalls').put(call);
-      messages.forEach(m => tx.objectStore('messageQueue').add(m));
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    await this.put('attendees', attendee);
+    await this.put('scheduledCalls', call);
+    if (messages && messages.length) {
+      const { error } = await SB.from('messageQueue').insert(messages);
+      if (error) throw error;
+    }
   },
   async getSetting(key) {
     const row = await this.get('settings', key);
@@ -435,31 +420,22 @@ const DB = {
     return this.put('settings', { key, value });
   },
   async wipeAttendeeData() {
-    const db = await this.open();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(['attendees', 'scheduledCalls', 'messageQueue'], 'readwrite');
-      tx.objectStore('attendees').clear();
-      tx.objectStore('scheduledCalls').clear();
-      tx.objectStore('messageQueue').clear();
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    // A DELETE with no filter is rejected by PostgREST, so match every row via
+    // a predicate no id can equal.
+    for (const store of ['attendees', 'scheduledCalls', 'messageQueue']) {
+      const { error } = await SB.from(store).delete().neq('id', '__never__');
+      if (error) throw error;
+    }
   },
   async deleteMany(storeName, keys) {
-    const db = await this.open();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(storeName, 'readwrite');
-      const store = tx.objectStore(storeName);
-      keys.forEach(k => store.delete(k));
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
+    if (!keys || !keys.length) return;
+    const { error } = await SB.from(storeName).delete().in(this._pk(storeName), keys);
+    if (error) throw error;
   },
   // Deleting a check-in also removes its scheduled call(s) and queued
   // messages so the admin views never show orphaned records pointing at
   // a deleted attendee.
   async deleteAttendeesCascade(attendeeIds) {
-    const db = await this.open();
     const attendees = await this.getAll('attendees');
     const byId = {}; attendees.forEach(a => { byId[a.id] = a; });
     // Deleting a primary also removes its linked additional guests (whole party).
@@ -483,15 +459,100 @@ const DB = {
     const [calls, messages] = [await this.getAll('scheduledCalls'), await this.getAll('messageQueue')];
     const callIds = calls.filter(c => idSet.has(c.attendeeId)).map(c => c.id);
     const messageIds = messages.filter(m => idSet.has(m.attendeeId)).map(m => m.id);
+    const ids = Array.from(idSet);
+    await this.deleteMany('attendees', ids);
+    if (primariesToUpdate.length) await this.putMany('attendees', primariesToUpdate);
+    if (callIds.length) await this.deleteMany('scheduledCalls', callIds);
+    if (messageIds.length) await this.deleteMany('messageQueue', messageIds);
+    return ids;
+  }
+};
+
+/* =========================================================
+   SECTION: AUTHENTICATION
+   Every device must sign in (Supabase Auth) before the kiosk runs. Row-level
+   security then grants data access only to signed-in staff; a visitor who
+   merely loads the URL sees nothing.
+   ========================================================= */
+const Auth = {
+  async currentSession() {
+    const { data } = await SB.auth.getSession();
+    return data ? data.session : null;
+  },
+  showLogin(message) {
+    SCREEN_IDS.forEach(id => { const n = document.getElementById(id); if (n) n.classList.add('hidden'); });
+    const scr = document.getElementById('screen-login');
+    scr.classList.remove('hidden');
+    UI.currentScreen = 'screen-login';
+    const staffBtn = document.getElementById('staff-access-btn');
+    if (staffBtn) staffBtn.style.display = 'none';
+    const container = document.getElementById('screen-login-content');
+    container.innerHTML = '';
+    container.appendChild(el('p', { class: 'body-text', text: 'Sign in to start the check-in kiosk on this device. You stay signed in until you sign out.' }));
+    const emailInput = el('input', { type: 'email', placeholder: 'Staff email', inputmode: 'email', autocomplete: 'username', autocapitalize: 'off', autocorrect: 'off' });
+    const pwInput = el('input', { type: 'password', placeholder: 'Password', autocomplete: 'current-password' });
+    const errorBox = el('div', { class: 'error-text' });
+    if (message) errorBox.textContent = message;
+    const btn = el('button', { class: 'btn btn-accent', text: 'Sign In' });
+    const submit = async () => {
+      errorBox.textContent = '';
+      const email = emailInput.value.trim();
+      const password = pwInput.value;
+      if (!email || !password) { errorBox.textContent = 'Enter your email and password.'; return; }
+      btn.disabled = true; btn.textContent = 'Signing in…';
+      const { error } = await SB.auth.signInWithPassword({ email, password });
+      btn.disabled = false; btn.textContent = 'Sign In';
+      if (error) { errorBox.textContent = error.message || 'Sign-in failed.'; pwInput.value = ''; return; }
+      await startApp();
+    };
+    btn.addEventListener('click', submit);
+    pwInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+    container.appendChild(emailInput);
+    container.appendChild(pwInput);
+    container.appendChild(errorBox);
+    container.appendChild(btn);
+    emailInput.focus();
+  },
+  async signOut() {
+    await SB.auth.signOut();
+    location.reload();
+  }
+};
+
+/* =========================================================
+   SECTION: LEGACY (OFFLINE) IMPORT
+   One-time helper: pull records this device saved in the old offline IndexedDB
+   into the shared cloud database, so nothing entered before going online is lost.
+   ========================================================= */
+const LegacyImport = {
+  openLegacy() {
     return new Promise((resolve, reject) => {
-      const tx = db.transaction(['attendees', 'scheduledCalls', 'messageQueue'], 'readwrite');
-      idSet.forEach(id => tx.objectStore('attendees').delete(id));
-      primariesToUpdate.forEach(a => tx.objectStore('attendees').put(a));
-      callIds.forEach(id => tx.objectStore('scheduledCalls').delete(id));
-      messageIds.forEach(id => tx.objectStore('messageQueue').delete(id));
-      tx.oncomplete = () => resolve(Array.from(idSet));
-      tx.onerror = () => reject(tx.error);
+      const req = indexedDB.open('seminarCheckinDB');
+      req.onsuccess = (e) => resolve(e.target.result);
+      req.onerror = (e) => reject(e.target.error);
     });
+  },
+  readAll(db, store) {
+    return new Promise((resolve) => {
+      if (!db.objectStoreNames.contains(store)) return resolve([]);
+      const req = db.transaction(store, 'readonly').objectStore(store).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    });
+  },
+  async run() {
+    const db = await this.openLegacy();
+    const [att, calls, msgs, settings] = await Promise.all([
+      this.readAll(db, 'attendees'), this.readAll(db, 'scheduledCalls'),
+      this.readAll(db, 'messageQueue'), this.readAll(db, 'settings')
+    ]);
+    if (att.length) await DB.putMany('attendees', att);
+    if (calls.length) await DB.putMany('scheduledCalls', calls);
+    if (msgs.length) await DB.putMany('messageQueue', msgs);
+    // Skip the device-local admin password hash; the shared one wins now.
+    const toPush = settings.filter(r => r.key !== 'adminPasswordHash');
+    if (toPush.length) await DB.putMany('settings', toPush);
+    return { attendees: att.length, calls: calls.length, messages: msgs.length, settings: toPush.length };
   }
 };
 
@@ -769,18 +830,18 @@ const CheckIn = {
    SECTION: SCHEDULING FLOW
    ========================================================= */
 const Scheduler = {
-  // Called when Calendly's inline embed reports a completed booking (postMessage).
-  // NOTE: confirmation + reminder messaging is handled entirely by Calendly Workflows,
-  // configured in the Scheduling admin tab -- this app sends nothing for these bookings.
-  async recordCalendlyBooking(payload) {
+  // Called when the guest confirms they've finished booking in the LeadConnector embed.
+  // LeadConnector's embed emits no booking-completion postMessage (its form_embed.js only
+  // handles iframe resizing), so the guest taps Continue to advance -- there's no reliable
+  // signal to auto-detect the booked slot, hence startTime is left blank. Confirmation +
+  // reminder messaging is handled entirely inside LeadConnector's workflows/automations.
+  async recordBooking() {
     const attendee = AppData.attendees.find(a => a.id === AppState.currentAttendeeId);
     if (!attendee) return;
     const now = new Date().toISOString();
     const call = {
       id: IdUtil.newId('call'), attendeeId: attendee.id, date: '', window: '',
-      status: 'scheduled', source: 'calendly', startTime: '',
-      calendlyEventUri: (payload && payload.event && payload.event.uri) || '',
-      calendlyInviteeUri: (payload && payload.invitee && payload.invitee.uri) || '',
+      status: 'scheduled', source: 'leadconnector', startTime: '',
       assignedTeamMember: '', createdAt: now
     };
     attendee.scheduledCallId = call.id;
@@ -788,8 +849,6 @@ const Scheduler = {
     attendee.updatedAt = now;
     await DB.put('scheduledCalls', call);
     await DB.put('attendees', attendee);
-    // The exact start time lives in the Calendly API; pull it best-effort when a token is set.
-    Calendly.fetchEventStart(call);
     AppState.thankYouInfo = null;
     await this.afterScheduled(attendee);
   },
@@ -801,7 +860,7 @@ const Scheduler = {
     const now = new Date().toISOString();
     const call = {
       id: IdUtil.newId('call'), attendeeId: attendee.id, date: '', window: '',
-      status: 'requested', source: 'calendly', startTime: '',
+      status: 'requested', source: 'leadconnector', startTime: '',
       assignedTeamMember: '', createdAt: now
     };
     attendee.scheduledCallId = call.id;
@@ -825,109 +884,95 @@ const Scheduler = {
 };
 
 /* =========================================================
-   SECTION: CALENDLY INLINE EMBED
+   SECTION: LEADCONNECTOR BOOKING EMBED
    ========================================================= */
-const Calendly = {
-  WIDGET_SRC: 'https://assets.calendly.com/assets/external/widget.js',
+const Booking = {
+  // LeadConnector (GoHighLevel) booking widget. Admins can override the link in the
+  // Scheduling tab; this default is used out of the box when nothing is saved.
+  DEFAULT_URL: 'https://api.leadconnectorhq.com/widget/booking/lt8QvkVOwlSmwQpulL3M',
+  // form_embed.js only auto-resizes the iframe -- the widget renders fine without it, so it's
+  // loaded best-effort and never blocks the booking flow.
+  EMBED_SCRIPT: 'https://link.msgsndr.com/js/form_embed.js',
   _scriptLoading: null,
-  _messageHandler: null,
   _fallbackTimer: null,
-  _settled: false,
 
-  // USCW brand styling on the booking link: navy accent + no GDPR banner on the kiosk.
-  buildUrl(baseUrl) {
-    const sep = baseUrl.indexOf('?') === -1 ? '?' : '&';
-    return baseUrl + sep + 'primary_color=002a47&hide_gdpr_banner=1';
-  },
-
-  isCalendlyEvent(e) {
-    return !!(e && typeof e.origin === 'string' && e.origin.indexOf('calendly.com') !== -1 &&
-      e.data && typeof e.data.event === 'string' && e.data.event.indexOf('calendly.') === 0);
+  // LeadConnector prefill params ride on the booking URL query string.
+  buildUrl(baseUrl, a) {
+    a = a || {};
+    const params = [];
+    const first = (a.firstName || '').trim();
+    const last = (a.lastName || '').trim();
+    if (first) params.push('first_name=' + encodeURIComponent(first));
+    if (last) params.push('last_name=' + encodeURIComponent(last));
+    if (a.email) params.push('email=' + encodeURIComponent(a.email));
+    if (a.phone) params.push('phone=' + encodeURIComponent(a.phone));
+    if (!params.length) return baseUrl;
+    return baseUrl + (baseUrl.indexOf('?') === -1 ? '?' : '&') + params.join('&');
   },
 
   loadScript() {
-    if (window.Calendly && window.Calendly.initInlineWidget) return Promise.resolve();
     if (this._scriptLoading) return this._scriptLoading;
     this._scriptLoading = new Promise((resolve, reject) => {
+      if (document.querySelector('script[src="' + this.EMBED_SCRIPT + '"]')) return resolve();
       const s = document.createElement('script');
-      s.src = this.WIDGET_SRC; s.async = true;
+      s.src = this.EMBED_SCRIPT; s.async = true;
       s.onload = () => resolve();
-      s.onerror = () => { this._scriptLoading = null; reject(new Error('Calendly widget failed to load')); };
+      s.onerror = () => { this._scriptLoading = null; reject(new Error('Booking widget script failed to load')); };
       document.head.appendChild(s);
     });
     return this._scriptLoading;
   },
 
   teardown() {
-    if (this._messageHandler) { window.removeEventListener('message', this._messageHandler); this._messageHandler = null; }
     if (this._fallbackTimer) { clearInterval(this._fallbackTimer); this._fallbackTimer = null; }
-    this._settled = false;
   },
 
-  // Render the inline widget via widget.js's data-url auto-init (the path proven to render
-  // here). Prefill rides on the URL. We watch for the injected iframe and only call onFail()
-  // if NOTHING renders within ~15s -- a genuine offline / blocked-embed situation. statusLine
-  // gives on-screen visibility while loading and is removed once the calendar appears.
-  mount(widget, statusLine, onFail) {
+  // Point the iframe at the booking URL and watch for its load event. We control the iframe
+  // directly (unlike Calendly's script-injected one), so a fired load = rendered; if nothing
+  // loads within ~15s it's a genuine offline / blocked-embed situation and onFail() runs.
+  // statusLine gives on-screen visibility while loading and is removed once the widget appears.
+  mount(iframe, url, statusLine, onFail) {
     let elapsed = 0;
     let scriptState = 'loading';
-    let inited = false;
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      if (statusLine && statusLine.parentNode) statusLine.parentNode.removeChild(statusLine);
+      if (this._fallbackTimer) { clearInterval(this._fallbackTimer); this._fallbackTimer = null; }
+    };
+    iframe.addEventListener('load', settle);
     this.loadScript().then(() => { scriptState = 'loaded'; }).catch(() => { scriptState = 'failed'; });
+    // Attach the listener before setting src so a fast load can't race past us.
+    iframe.src = url;
     this._fallbackTimer = setInterval(() => {
-      // Success: Calendly injected its iframe -> stop watching, drop the status line.
-      if (widget.querySelector('iframe')) {
-        this._settled = true;
-        if (statusLine && statusLine.parentNode) statusLine.parentNode.removeChild(statusLine);
-        clearInterval(this._fallbackTimer); this._fallbackTimer = null;
-        return;
-      }
+      if (settled) return;
       elapsed += 500;
-      // Backstop: if the script is ready but auto-init produced no iframe by ~2.5s, init once.
-      if (!inited && elapsed >= 2500 && window.Calendly && window.Calendly.initInlineWidget) {
-        inited = true;
-        try {
-          window.Calendly.initInlineWidget({ url: widget.getAttribute('data-url'), parentElement: widget });
-        } catch (e) { /* timeout handles it */ }
-      }
       if (statusLine) statusLine.textContent = 'Loading secure scheduler… (' + (elapsed / 1000) + 's · script ' + scriptState + ')';
       if (elapsed >= 15000) {
         clearInterval(this._fallbackTimer); this._fallbackTimer = null;
         onFail();
       }
     }, 500);
-  },
-
-  // Best-effort pull of the exact start time. Requires a Personal Access Token (Scheduling tab).
-  // No token wired yet => the booking is still saved; the time simply fills in once a token is set.
-  async fetchEventStart(call) {
-    const token = ((await DB.getSetting('calendlyToken')) || '').trim();
-    if (!token || !call.calendlyEventUri) return;
-    try {
-      const res = await fetch(call.calendlyEventUri, { headers: { Authorization: 'Bearer ' + token } });
-      if (!res.ok) return;
-      const data = await res.json();
-      const start = data && data.resource && data.resource.start_time;
-      if (!start) return;
-      call.startTime = start;
-      await DB.put('scheduledCalls', call);
-      await DB.setSetting('calendlyLastSync', new Date().toISOString());
-    } catch (err) { /* offline / CORS: leave time blank, booking is already recorded */ }
   }
 };
 
-// Format a Calendly ISO start time in USCW's operating timezone (Central).
-function formatCalendlyTime(iso) {
+// Format an ISO booking start time in USCW's operating timezone (Central). LeadConnector
+// bookings don't return a slot to the kiosk, so these mainly serve legacy/manually-set records.
+function formatBookingTime(iso) {
   if (!iso) return '';
   try {
     return new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' }) + ' CT';
   } catch (e) { return ''; }
 }
-function formatCalendlyDate(iso) {
+function formatBookingDate(iso) {
   if (!iso) return '';
   try {
     return new Date(iso).toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', year: 'numeric' });
   } catch (e) { return ''; }
 }
+// A booking made through the online widget (current LeadConnector or legacy Calendly records).
+function isOnlineBooking(source) { return source === 'leadconnector' || source === 'calendly'; }
 
 /* =========================================================
    SECTION: IMPORT (CSV paste + JSON file)
@@ -1069,12 +1114,12 @@ const Exporter = {
     const byId = {}; attendees.forEach(a => byId[a.id] = a);
     const rows = calls.map(c => {
       const a = byId[c.attendeeId] || {};
-      const isCalendly = c.source === 'calendly';
+      const isOnline = isOnlineBooking(c.source);
       return {
         name: (a.firstName || '') + ' ' + (a.lastName || ''), phone: a.phone || '', email: a.email || '',
-        source: isCalendly ? 'Calendly' : 'Manual',
-        date: (isCalendly && c.startTime) ? formatCalendlyDate(c.startTime) : (c.date || ''),
-        window: isCalendly ? (c.startTime ? formatCalendlyTime(c.startTime) : '') : (c.window || ''),
+        source: isOnline ? 'Online' : 'Manual',
+        date: (isOnline && c.startTime) ? formatBookingDate(c.startTime) : (c.date || ''),
+        window: isOnline ? (c.startTime ? formatBookingTime(c.startTime) : '') : (c.window || ''),
         status: c.status,
         assignedTeamMember: c.assignedTeamMember || ''
       };
@@ -1207,15 +1252,16 @@ const SCREEN_IDS = [
   'screen-additional-guests', 'screen-additional-confirm',
   'screen-followup-select',
   'screen-schedule-call', 'screen-thank-you',
-  'screen-admin-gate', 'screen-admin-dashboard'
+  'screen-admin-gate', 'screen-admin-dashboard',
+  'screen-login'
 ];
 
 const UI = {
   currentScreen: 'screen-home',
   clearScreenContent(screenId) {
     if (!screenId) return;
-    // Leaving the schedule screen: detach the Calendly listener + offline-fallback timer.
-    if (screenId === 'screen-schedule-call') Calendly.teardown();
+    // Leaving the schedule screen: clear the booking embed's offline-fallback timer.
+    if (screenId === 'screen-schedule-call') Booking.teardown();
     if (screenId === 'screen-home') {
       document.getElementById('search-input').value = '';
       document.getElementById('search-hint').textContent = '';
@@ -1227,7 +1273,7 @@ const UI = {
   },
   forceShowHome() {
     // Returning to the kiosk home always ends any in-progress flow: clear transient state.
-    Calendly.teardown();
+    Booking.teardown();
     AppState.partyId = null;
     AppState.additionalFlow = false;
     AppState.additionalSpouseId = null;
@@ -1446,14 +1492,16 @@ const UI = {
     container.appendChild(el('button', { class: 'btn btn-secondary btn-back', text: 'Back', onclick: () => UI.showScreen('screen-additional-guests') }));
   },
 
-  // Schedule-a-call screen: a Calendly inline embed replaces the old internal time-slot
-  // picker. Calendly natively owns availability, double-booking prevention, and the calendar UI.
+  // Schedule-a-call screen: a LeadConnector booking embed replaces the old internal time-slot
+  // picker. LeadConnector natively owns availability, double-booking prevention, and the
+  // calendar UI. Unlike Calendly it emits no booking-completion event, so the guest taps
+  // "I've Finished Booking" to advance (see Scheduler.recordBooking).
   async renderScheduleCall() {
     const container = document.getElementById('screen-schedule-call-content');
     container.innerHTML = '';
-    Calendly.teardown();
+    Booking.teardown();
     const attendee = AppData.attendees.find(a => a.id === AppState.currentAttendeeId);
-    const url = ((await DB.getSetting('calendlyUrl')) || '').trim();
+    const url = (((await DB.getSetting('bookingUrl')) || '').trim()) || Booking.DEFAULT_URL;
 
     const header = (headline) => {
       container.appendChild(el('span', { class: 'eyebrow', text: 'Schedule a Call' }));
@@ -1462,10 +1510,10 @@ const UI = {
     };
     const backBtn = () => el('button', {
       class: 'btn btn-secondary btn-back', text: 'Back',
-      onclick: () => { Calendly.teardown(); UI.showScreen('screen-additional-guests'); }
+      onclick: () => { Booking.teardown(); UI.showScreen('screen-additional-guests'); }
     });
 
-    // Frame 1b -- no link configured: calm cream notice instead of a broken embed.
+    // Frame 1b -- no link configured (default cleared to blank): calm cream notice.
     if (!url) {
       header('Choose a Time');
       container.appendChild(el('div', { class: 'summary-box', text: 'Scheduling is not yet configured — please see a USCW team member.' }));
@@ -1478,7 +1526,7 @@ const UI = {
     const showFallback = async () => {
       if (fellBack) return;
       fellBack = true;
-      Calendly.teardown();
+      Booking.teardown();
       await Scheduler.recordOfflineRequest();
       container.innerHTML = '';
       header('We Have You Covered');
@@ -1489,38 +1537,30 @@ const UI = {
       }));
     };
 
-    // Frame 1a -- inline embed via data-url auto-init (the render path proven to work here).
-    // Explicit inline height so Calendly's iframe isn't sized to a 0px container. Prefill THIS
-    // guest's own details (the primary who filled out the form, not a spouse) on the URL.
+    // Frame 1a -- inline iframe embed. Explicit height so the iframe isn't sized to a 0px
+    // container before form_embed.js resizes it. Prefill THIS guest's own details (the primary
+    // who filled out the form, not a spouse) on the URL.
     header('Choose a Time');
-    const a = attendee || {};
-    const fullName = ((a.firstName || '') + ' ' + (a.lastName || '')).trim();
-    let dataUrl = Calendly.buildUrl(url);
-    if (fullName) dataUrl += '&name=' + encodeURIComponent(fullName);
-    if (a.email) dataUrl += '&email=' + encodeURIComponent(a.email);
-    if (a.phone) dataUrl += '&phone=' + encodeURIComponent(a.phone); // best-effort; see note
-    const widget = el('div', { class: 'calendly-inline-widget' });
-    widget.setAttribute('data-url', dataUrl);
+    const dataUrl = Booking.buildUrl(url, attendee || {});
+    const widget = el('iframe', { class: 'booking-inline-widget', scrolling: 'no' });
     widget.setAttribute('style', 'min-width:320px;height:640px;');
-    // Confirmation + reminder messages are NOT sent from this app -- Calendly Workflows
-    // (configured in the Scheduling admin tab) own all guest-facing scheduling messaging.
+    widget.setAttribute('title', 'Schedule a call');
+    // Confirmation + reminder messages are NOT sent from this app -- they're owned by
+    // LeadConnector's own workflows/automations for this calendar.
     container.appendChild(el('div', { class: 'schedule-embed-wrap' }, [widget]));
     const statusLine = el('p', { class: 'schedule-help', style: 'text-align:center;', text: 'Loading secure scheduler…' });
     container.appendChild(statusLine);
+
+    // LeadConnector gives the kiosk no completion signal, so an explicit confirm advances the
+    // flow. Guests who booked continue here; those who didn't can still step Back.
+    container.appendChild(el('button', {
+      class: 'btn', text: "I've Finished Booking — Continue",
+      onclick: () => { Booking.teardown(); Scheduler.recordBooking(); }
+    }));
     container.appendChild(backBtn());
 
-    // Advance to "who should we reach out to" only on a real booking.
-    Calendly._messageHandler = (e) => {
-      if (!Calendly.isCalendlyEvent(e)) return;
-      if (e.data.event === 'calendly.event_scheduled') {
-        Calendly.teardown();
-        Scheduler.recordCalendlyBooking(e.data.payload || {});
-      }
-    };
-    window.addEventListener('message', Calendly._messageHandler);
-
-    // Render the embed; showFallback() runs only if nothing renders within ~15s.
-    Calendly.mount(widget, statusLine, showFallback);
+    // Render the embed; showFallback() runs only if nothing loads within ~15s.
+    Booking.mount(widget, dataUrl, statusLine, showFallback);
   },
 
   renderThankYou() {
@@ -1538,11 +1578,11 @@ const UI = {
   async renderAdminGate() {
     const container = document.getElementById('screen-admin-gate-content');
     container.innerHTML = '';
-    // The passcode lives only in this device's local storage. If none is set yet
-    // (fresh install / cleared data), first admin access creates one locally.
+    // The admin passcode is stored in Supabase settings, so it is shared across
+    // every device. If none is set yet, the first admin access creates it.
     const hasPassword = !!(await DB.getSetting('adminPasswordHash'));
     if (!hasPassword) {
-      container.appendChild(el('p', { class: 'body-text', text: 'No staff password is set on this device yet. Create one to continue — it is stored only on this device.' }));
+      container.appendChild(el('p', { class: 'body-text', text: 'No admin passcode has been set yet. Create one to continue — it will apply to every device.' }));
     }
     const input = el('input', {
       type: 'password', placeholder: hasPassword ? 'Staff password' : 'Create a staff password',
@@ -1606,55 +1646,34 @@ const UI = {
     this._renderSettingsPanel(panels['Settings']);
   },
 
-  // Scheduling tab (frame 1d): Calendly connection config. Reminder timing + confirmation
-  // messages live in Calendly's Workflows -- they can't be driven via Calendly's public API,
-  // so we link out rather than build non-functional in-app toggles.
+  // Scheduling tab (frame 1d): LeadConnector booking config. The kiosk embeds the booking
+  // widget; confirmation + reminder messaging is owned by LeadConnector's own automations for
+  // this calendar, so there's nothing message-related to configure here.
   async _renderSchedulingPanel(panel) {
     panel.innerHTML = '';
-    const [savedUrl, savedToken] = [
-      (await DB.getSetting('calendlyUrl')) || '',
-      (await DB.getSetting('calendlyToken')) || ''
-    ];
+    // Blank saved value => fall back to the built-in default link (shown as the placeholder).
+    const savedUrl = (await DB.getSetting('bookingUrl'));
 
-    panel.appendChild(el('h2', { text: 'Calendly Scheduling' }));
+    panel.appendChild(el('h2', { text: 'LeadConnector Scheduling' }));
 
     // Booking link + inline Test Link.
     const linkField = el('div', { class: 'field' });
-    linkField.appendChild(el('label', { text: 'Calendly Scheduling Link' }));
-    const linkInput = el('input', { type: 'text', placeholder: 'https://calendly.com/uscw-team/consultation' });
-    linkInput.value = savedUrl;
+    linkField.appendChild(el('label', { text: 'Booking Widget Link' }));
+    const linkInput = el('input', { type: 'text', placeholder: Booking.DEFAULT_URL });
+    linkInput.value = savedUrl || '';
     const testBtn = el('button', {
       class: 'btn btn-secondary btn-small', text: 'Test Link', onclick: () => {
-        const u = linkInput.value.trim();
-        if (!u) { status('Enter a scheduling link first.'); return; }
+        const u = linkInput.value.trim() || Booking.DEFAULT_URL;
         window.open(u, '_blank', 'noopener');
       }
     });
     linkField.appendChild(el('div', { class: 'input-row' }, [linkInput, testBtn]));
+    linkField.appendChild(el('p', { class: 'schedule-help', text: 'Leave blank to use the default USCW booking link. Paste a LeadConnector booking widget URL to override.' }));
     panel.appendChild(linkField);
 
-    // Personal Access Token -- stored for a future live-stats pull; no API calls wired yet.
-    const tokenField = el('div', { class: 'field' });
-    tokenField.appendChild(el('label', { text: 'Calendly Personal Access Token' }));
-    const tokenInput = el('input', { type: 'password', placeholder: 'Optional' });
-    tokenInput.value = savedToken;
-    const toggleTokenBtn = el('button', {
-      class: 'btn btn-secondary btn-small', text: 'Show', onclick: () => {
-        if (tokenInput.type === 'password') { tokenInput.type = 'text'; toggleTokenBtn.textContent = 'Hide'; }
-        else { tokenInput.type = 'password'; toggleTokenBtn.textContent = 'Show'; }
-      }
-    });
-    tokenField.appendChild(el('div', { class: 'input-row' }, [tokenInput, toggleTokenBtn]));
-    tokenField.appendChild(el('p', { class: 'schedule-help', text: 'Optional. Stored for a future live-stats pull — no calls are made yet.' }));
-    panel.appendChild(tokenField);
-
-    // Confirmation & reminder messaging is owned by Calendly Workflows (link-out below the hairline).
+    // Confirmation & reminder messaging is owned by LeadConnector automations.
     panel.appendChild(el('span', { class: 'eyebrow', text: 'Confirmation & Reminder Messages' }));
-    panel.appendChild(el('p', { class: 'schedule-help', text: "Reminder timing and confirmation messages are managed directly in Calendly's Workflows settings." }));
-    panel.appendChild(el('button', {
-      class: 'btn btn-secondary btn-small', text: 'Open Calendly Workflows ↗',
-      onclick: () => window.open('https://calendly.com/app/workflows', '_blank', 'noopener')
-    }));
+    panel.appendChild(el('p', { class: 'schedule-help', text: "Reminder timing and confirmation messages are managed directly in LeadConnector's calendar automations." }));
 
     const statusBox = el('div', { class: 'summary-box' });
     statusBox.style.display = 'none';
@@ -1662,8 +1681,7 @@ const UI = {
 
     panel.appendChild(el('button', {
       class: 'btn', text: 'Save Scheduling Settings', onclick: async () => {
-        await DB.setSetting('calendlyUrl', linkInput.value.trim());
-        await DB.setSetting('calendlyToken', tokenInput.value.trim());
+        await DB.setSetting('bookingUrl', linkInput.value.trim());
         status('Scheduling settings saved.');
       }
     }));
@@ -1751,17 +1769,10 @@ const UI = {
 
   async _renderScheduledCallsPanel(panel) {
     panel.innerHTML = '';
-    const [calls, attendees, token, lastSync] = [
-      await DB.getAll('scheduledCalls'), await DB.getAll('attendees'),
-      (await DB.getSetting('calendlyToken')) || '', (await DB.getSetting('calendlyLastSync')) || ''
+    const [calls, attendees] = [
+      await DB.getAll('scheduledCalls'), await DB.getAll('attendees')
     ];
     const byId = {}; attendees.forEach(a => byId[a.id] = a);
-
-    // "Last Calendly sync" -- only meaningful once a token enables the live API pull.
-    if (token) {
-      panel.appendChild(el('div', { class: 'calendly-sync',
-        text: 'Last Calendly sync: ' + (lastSync ? new Date(lastSync).toLocaleString() : 'never') }));
-    }
 
     const selected = new Set();
     const statusBox = el('div', { class: 'summary-box' });
@@ -1795,21 +1806,21 @@ const UI = {
         el('span', { class: 'status-dot ' + meta.cls }), el('span', { text: meta.label })
       ])]);
     };
-    // source badge: Calendly bookings vs manual/legacy records (no source => Manual).
+    // source badge: online bookings (LeadConnector / legacy Calendly) vs manual records.
     const sourceCell = (c) => {
-      const isCalendly = c.source === 'calendly';
+      const isOnline = isOnlineBooking(c.source);
       return el('td', {}, [el('span', {
-        class: 'src-badge ' + (isCalendly ? 'src-badge--calendly' : 'src-badge--manual'),
-        text: isCalendly ? 'Calendly' : 'Manual'
+        class: 'src-badge ' + (isOnline ? 'src-badge--booking' : 'src-badge--manual'),
+        text: isOnline ? 'Online' : 'Manual'
       })]);
     };
-    // Calendly rows show the booked slot (time from the API); manual rows keep their window text.
+    // Online rows show the booked slot when a start time is known; manual rows keep their window text.
     const timeText = (c) => {
-      if (c.source === 'calendly') return c.startTime ? formatCalendlyTime(c.startTime) : '—';
+      if (isOnlineBooking(c.source)) return c.startTime ? formatBookingTime(c.startTime) : '—';
       return c.window || '';
     };
     const dateText = (c) => {
-      if (c.source === 'calendly' && c.startTime) return formatCalendlyDate(c.startTime);
+      if (isOnlineBooking(c.source) && c.startTime) return formatBookingDate(c.startTime);
       return c.date || '';
     };
 
@@ -2030,6 +2041,25 @@ const UI = {
     }));
     panel.appendChild(pwStatus);
 
+    panel.appendChild(el('h2', { text: 'This Device' }));
+    const migStatus = el('div', { class: 'summary-box' });
+    panel.appendChild(el('p', { class: 'body-text', text: 'If this device was used before going online, import the records it saved offline into the shared cloud database.' }));
+    panel.appendChild(el('button', {
+      class: 'btn btn-small btn-secondary', text: "Import this device's offline data", onclick: async () => {
+        migStatus.textContent = 'Importing…';
+        try {
+          const r = await LegacyImport.run();
+          AppData.attendees = await DB.getAll('attendees');
+          await Migrations.normalizeAttendees();
+          migStatus.textContent = 'Imported ' + r.attendees + ' attendees, ' + r.calls + ' calls, ' + r.messages + ' messages, ' + r.settings + ' settings.';
+        } catch (e) { migStatus.textContent = 'Import failed: ' + (e && e.message ? e.message : e); }
+      }
+    }));
+    panel.appendChild(migStatus);
+    panel.appendChild(el('button', {
+      class: 'btn btn-small btn-secondary', text: 'Sign Out This Device', onclick: () => Auth.signOut()
+    }));
+
     panel.appendChild(el('h2', { text: 'Danger Zone' }));
     const confirmInput = el('input', { type: 'text', placeholder: 'Type DELETE to confirm' });
     const wipeStatus = el('div', { class: 'summary-box' });
@@ -2216,13 +2246,6 @@ async function init() {
     });
   }, 150));
 
-  AppData.attendees = await DB.getAll('attendees');
-  await Migrations.normalizeAttendees();
-  AppData.teamMembers = (await DB.getSetting('teamMembers')) || [];
-
-  // No admin password is baked into the source (public repo). Each device
-  // establishes its own passcode locally on first admin access (see renderAdminGate).
-
   IdleTimer.init();
 
   // Auto-hide the fixed brand header while scrolling down; reveal on scroll up.
@@ -2235,6 +2258,21 @@ async function init() {
     lastScrollY = y;
   }, { passive: true });
 
+  // Auth gate: a signed-in device goes straight to the kiosk; otherwise show
+  // the sign-in screen and start the app only after a successful sign-in.
+  const session = await Auth.currentSession();
+  if (session) await startApp();
+  else Auth.showLogin();
+}
+
+// Loads shared data from Supabase and shows the kiosk. Runs once the device
+// has a valid session (either persisted from a prior visit or just signed in).
+async function startApp() {
+  const staffBtn = document.getElementById('staff-access-btn');
+  if (staffBtn) staffBtn.style.display = '';
+  AppData.attendees = await DB.getAll('attendees');
+  await Migrations.normalizeAttendees();
+  AppData.teamMembers = (await DB.getSetting('teamMembers')) || [];
   UI.forceShowHome();
 }
 
